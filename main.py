@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from google.cloud import storage
 import xgboost as xgb
 import numpy as np
+from contextlib import asynccontextmanager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -13,25 +14,17 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()  # Load environment variables from .env
 
-app = FastAPI()
 model = None
-
-# Pydantic model for input validation with constraints
-class PenguinData(BaseModel):
-    bill_length_mm: float = Field(..., gt=0, description="Bill length in millimeters")
-    bill_depth_mm: float = Field(..., gt=0, description="Bill depth in millimeters")
-    flipper_length_mm: float = Field(..., gt=0, description="Flipper length in millimeters")
-    body_mass_g: float = Field(..., gt=0, description="Body mass in grams")
-
-# Feature names for XGBoost model
 FEATURE_NAMES = ["bill_length_mm", "bill_depth_mm", "flipper_length_mm", "body_mass_g"]
 
 def load_model():
     """Load the XGBoost model from Google Cloud Storage or local file in test mode."""
     try:
         if os.getenv("TEST_MODE") == "1":
-            model_path = "penguin_model.json"
-            logger.info("Running in TEST_MODE, loading local model from penguin_model.json")
+            model_path = os.path.join(os.path.dirname(__file__), "penguin_model.json")
+            logger.info(f"Running in TEST_MODE, loading local model from {model_path}")
+            if not os.path.exists(model_path):
+                raise FileNotFoundError(f"Model file not found at {model_path}")
         else:
             credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
             logger.info(f"Environment variable GOOGLE_APPLICATION_CREDENTIALS: {credentials_path}")
@@ -54,7 +47,7 @@ def load_model():
             logger.info(f"Accessing bucket: {bucket_name}, blob: {blob_name}")
             bucket = client.bucket(bucket_name)
             blob = bucket.blob(blob_name)
-            model_path = "model.json"
+            model_path = os.path.join(os.path.dirname(__file__), "model.json")
             blob.download_to_filename(model_path)
         
         # Load XGBoost model
@@ -66,11 +59,24 @@ def load_model():
         logger.error(f"Failed to load model: {str(e)}")
         raise
 
-@app.on_event("startup")
-async def startup_event():
-    """Load the model when the FastAPI app starts."""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager to handle startup and shutdown events."""
     global model
+    logger.info("Starting up FastAPI application")
     model = load_model()
+    yield
+    logger.info("Shutting down FastAPI application")
+    model = None
+
+app = FastAPI(lifespan=lifespan)
+
+# Pydantic model for input validation with constraints
+class PenguinData(BaseModel):
+    bill_length_mm: float = Field(..., gt=0, description="Bill length in millimeters")
+    bill_depth_mm: float = Field(..., gt=0, description="Bill depth in millimeters")
+    flipper_length_mm: float = Field(..., gt=0, description="Flipper length in millimeters")
+    body_mass_g: float = Field(..., gt=0, description="Body mass in grams")
 
 @app.post("/predict")
 async def predict(data: PenguinData):
