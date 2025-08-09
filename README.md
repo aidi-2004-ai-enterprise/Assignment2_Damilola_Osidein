@@ -172,11 +172,3 @@ Depends on the input type and user base:
 
 ---
 
-If you'd like, I can now:
-
-* Add these Q\&A into the existing project README in-place (merge with other content),
-* Create separate markdown files for a `docs/` folder, or
-* Generate a one-page printable PDF with these answers.
-
-Which would you prefer?
-
