@@ -22,7 +22,7 @@ Key responsibilities:
 * Configurable model and preprocessing loaded at startup.
 * Docker-ready, ready for Cloud Run deployment.
 
-# README — Production Q\&A
+# README — Production Questions
 
 This README answers common production questions for the ML inference service (concise, actionable, and ready to include in your repository).
 
