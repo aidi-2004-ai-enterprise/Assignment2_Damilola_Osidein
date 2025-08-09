@@ -1,8 +1,7 @@
-FROM python:3.10
+FROM python:3.10-slim
 WORKDIR /app
-COPY requirements-locked.txt .
-RUN pip install --no-cache-dir -r requirements-locked.txt
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-COPY secure-keys/sa-key.json /app/secure-keys/sa-key.json
-ENV GOOGLE_APPLICATION_CREDENTIALS=/app/secure-keys/sa-key.json
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+EXPOSE 8080
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
