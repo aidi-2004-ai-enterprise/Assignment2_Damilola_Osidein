@@ -28,147 +28,71 @@ This README answers common production questions for the ML inference service (co
 
 ---
 
-## What edge cases might break your model in production that aren't in your training data?
+What edge cases might break your model in production that aren't in your training data?
 
-* **Distribution / concept drift:** new vehicle types, fuel or feature distributions not seen during training.
+Distribution / concept drift (new vehicle/penguin types or features), unseen categorical values (new makes/species), unit/format mismatches (cc vs L, kg vs lb), missing/null/malformed fields, adversarial or extreme out-of-range inputs, and time-dependent mismatches.
 
-  * *Mitigation:* monitor input/prediction distributions, alert on drift, schedule retraining and canary evaluations.
-* **Unseen categorical values:** new makes, trims, locale-specific tokens.
+Mitigations: schema validation (pydantic/JSON Schema), map unknowns to a sentinel (__UNKNOWN__), unit normalization, input size/rate limits, drift monitoring and scheduled retraining, and logging of samples for labeling. 
+GitHub
 
-  * *Mitigation:* map unknowns to `__UNKNOWN__`, return clear validation warnings, and capture samples for labeling.
-* **Unit and formatting mismatches:** cc vs liters, kg vs lb, string vs numeric.
+What happens if your model file becomes corrupted?
 
-  * *Mitigation:* strict schema + unit normalization, and explicit examples in API docs.
-* **Missing / null / malformed fields:** incomplete payloads or wrongly typed fields.
+Best practice: fail fast at startup (non-zero exit so orchestrator notices). If loading at runtime, return 503 and log the error. Prevent/mitigate with checksums (SHA256), a versioned model registry, a fallback model, CI smoke tests on artifacts, and automated rollback if model-load errors spike. 
+GitHub
 
-  * *Mitigation:* schema validation (JSON Schema, pydantic), clear error messages (400/422), and logging of missingness.
-* **Adversarial or extremely out-of-range inputs:** intentionally crafted values, extremely large numbers or payloads.
+What's a realistic load for a penguin classification service?
 
-  * *Mitigation:* payload size limits, input sanitization, rate limiting, anomaly detection.
-* **Time-dependent mismatches:** future years, daylight savings/timezone issues, discontinuities.
+Range depends on use: demo 0.1–5 RPS, moderate mobile use 10–200 RPS, public high-traffic 1k+ RPS (image models need GPU/optimized infra). Example cpu throughput: ~6 RPS per vCPU for a 150 ms inference; measure with a real in-region load test. (See repo locustfile for tests.) 
+GitHub
++1
 
-  * *Mitigation:* validate date ranges, use canonical UTC handling, and add business rules.
+How would you optimize if response times are too slow?
 
----
+Measure & profile (preprocessing vs inference vs serialization). Then: quantize/prune or use a smaller model, convert to ONNX/TensorRT, serve with an optimized runtime (ONNX Runtime / TF-Serving), enable batching, increase instance size or GPUs, add caching, tune concurrency and warm instances (min-instances). 
+GitHub
 
-## What happens if your model file becomes corrupted?
+What metrics matter most for ML inference APIs?
 
-* **Startup:** a corrupted model should cause the service to fail-fast and exit non-zero so orchestration notices a bad image.
-* **Runtime:** if loading on-demand, the service must return `503 Service Unavailable` for inference and log the failure.
+Tail latencies (p50/p95/p99), throughput (RPS), error rates (4xx/5xx/429), CPU & memory, cold-start rate, breakdown of inference vs preprocessing time, model outputs/confidence distributions, and business metrics (cost per inference & SLA compliance). 
+GitHub
 
-**How to prevent and recover:**
+Why is Docker layer caching important for build speed? (Did you leverage it?)
 
-1. Use checksums/signatures (SHA256) and validate before loading.
-2. Keep a versioned model registry and a fallback model to load automatically.
-3. Run CI smoke tests on artifacts before deployment.
-4. Alert on model load or repeated `5xx` responses and enable an automated rollback if necessary.
+Caching avoids re-installing dependencies and rebuilding unchanged layers; place stable steps (install deps) before copying frequently changing sources to maximize cache hits. The repo’s Dockerfile orders installs before copying app code to leverage that cache. Use BuildKit/CI cache for faster CI. 
+GitHub
++1
 
----
+What security risks exist with running containers as root?
 
-## What's a realistic load for a penguin classification service?
+If an attacker escapes the container, running as root makes host compromise and manipulation of mounted volumes easier. Mitigations: run as non-root user, drop Linux capabilities, use read-only filesystem mounts, apply seccomp/AppArmor, image scanning, and least-privilege IAM. 
+GitHub
 
-Depends on the input type and user base:
+How does cloud auto-scaling affect your load test results?
 
-* **Small demo / research:** 0.1–5 RPS.
-* **Moderate mobile app usage:** 10–200 RPS.
-* **High-traffic public API:** 1k+ RPS (requires GPU/optimized infra for image work).
+Autoscaling introduces cold starts (inflates tail latency) and autoscaler reaction time can cause transient errors or latency during ramping. Make load tests long enough for the autoscaler to stabilize and test from the same region to reduce noise. 
+GitHub
 
-**Example (image classification on CPU):** if each image takes 150 ms to infer on 1 vCPU, that’s \~6 RPS per vCPU. With concurrency 10 you might reach \~60 RPS per 4‑vCPU instance (very approximate). Always run a real load test in-region.
+What would happen with 10x more traffic?
 
----
+If autoscaling and quotas permit: horizontally scale out, cost increases, latency can stay stable. If you hit limits/quotas: queuing, 429/503, and increased tail latency. Plan to increase max-instances or instance size, add caching, and offload async tasks. 
+GitHub
 
-## How would you optimize if response times are too slow?
+How would you monitor performance in production?
 
-1. **Measure & profile:** break down time into preprocessing, inference, serialization.
-2. **Model optimizations:** quantization, pruning, smaller model, ONNX conversion, TensorRT.
-3. **Serving optimizations:** use TF‑Serving/ONNX Runtime or a compiled runtime, switch to gRPC.
-4. **Hardware:** switch to GPU or larger CPU instances.
-5. **Concurrency & batching:** tune concurrency, implement request batching where acceptable.
-6. **Caching:** short TTL cache for identical requests.
-7. **Warm instances:** increase `min-instances` to reduce cold starts.
+Dashboards for p50/p95/p99 latency, RPS, error rates, CPU/memory, instance count; distributed tracing (OpenTelemetry) for stage breakdown; structured logs with request_id, inference_ms, model_version; model monitoring for prediction/confidence drift; and synthetic canaries/smoke checks. 
+GitHub
 
----
+How would you implement blue-green deployment?
 
-## What metrics matter most for ML inference APIs?
+Deploy new revision (green) alongside current (blue), run smoke tests on green, gradually shift traffic (percent splits) while monitoring, and instantly flip traffic back if issues arise. Cloud Run supports revision traffic splitting which makes this straightforward. 
+GitHub
 
-* **Latency percentiles (p50/p95/p99)** — tail latency matters most.
-* **Throughput (RPS)** and **error rate** (4xx/5xx).
-* **CPU & memory usage**, instance counts, and cold-start rate.
-* **Inference time vs preprocessing time** (breakdown).
-* **Model metrics:** prediction/confidence distributions, input feature drift, label delay/error rate.
-* **Business metrics:** cost per inference, SLA compliance.
+What would you do if deployment fails in production?
 
----
+Immediately roll traffic back to the last healthy revision, alert on-call, collect logs/traces for root cause, fix and redeploy after CI smoke tests, then run a postmortem and add preventive guardrails. 
+GitHub
 
-## Why is Docker layer caching important for build speed? (Did you leverage it?)
+What happens if your container uses too much memory?
 
-* **Importance:** caching avoids reinstalling dependencies and rebuilding unchanged layers — dramatically speeds up iterative builds and CI.
-* **How to leverage:** put stable steps (install dependencies) before copying frequently changed source files; keep `.dockerignore` small; use BuildKit or CI caching features.
-* **Our repo:** the example Dockerfile installs requirements before copying the app — this allows the dependency layer to be cached.
-
----
-
-## What security risks exist with running containers as root?
-
-* **Higher impact on compromise:** container escape or exploit is more damaging with root privileges.
-* **Potential host damage:** easier to modify mounted volumes or sensitive files.
-
-**Mitigations:** run as a non-root user, drop capabilities, use read-only filesystem where possible, apply seccomp/AppArmor, and scan images.
-
----
-
-## How does cloud auto-scaling affect your load test results?
-
-* **Cold starts inflate tail latency** during scale-up.
-* **Autoscaler reaction time** can cause transient errors/latency during short tests.
-* **Test design:** run sustained stages long enough for autoscaler to stabilize and test from the same region to minimize network noise.
-
----
-
-## What would happen with 10x more traffic?
-
-* **If autoscaling and quotas allow:** more instances will be created; costs rise and latency may remain stable if the system scales horizontally.
-* **If you hit limits:** requests will queue or be rate-limited, leading to `429`/`503` and increased tail latency.
-
-**Plan:** increase `max-instances` or instance size, add caching, offload async work, and run targeted load tests to validate scaling behavior.
-
----
-
-## How would you monitor performance in production?
-
-* **Dashboards:** p50/p95/p99 latency, RPS, errors, CPU/memory, instance count.
-* **Tracing:** OpenTelemetry to see time spent in each stage.
-* **Logging:** structured logs with request\_id, inference\_ms, model\_version, and non-sensitive input hashes.
-* **Model monitoring:** prediction distributions, confidence changes, and data drift alerts.
-* **Synthetic tests & canaries:** automated smoke checks and canary traffic for each release.
-
----
-
-## How would you implement blue-green deployment?
-
-1. Deploy green revision alongside blue.
-2. Run smoke/integration tests against green.
-3. Gradually shift traffic (percentage-based) from blue to green while monitoring.
-4. Roll back instantly by shifting traffic back to blue if problems appear.
-
-*Cloud Run supports traffic splitting between revisions, making this straightforward.*
-
----
-
-## What would you do if deployment fails in production?
-
-* **Rollback traffic** to the last healthy revision immediately.
-* **Alert on-call** and gather logs/traces for root-cause analysis.
-* **Fix & re-deploy** after CI smoke tests.
-* **Postmortem** and preventive actions (tests, guardrails).
-
----
-
-## What happens if your container uses too much memory?
-
-* The runtime will OOM‑kill the container; Cloud Run will restart it, creating `5xx` errors and potential downtime.
-
-**Mitigations:** increase memory allocation, profile and reduce memory usage (lazy-loading, memory-mapped models), or split work across multiple processes.
-
----
-
+Platform will OOM-kill the container; it will restart (causing 5xx errors and downtime). Mitigations: increase memory allocation, profile and reduce memory (lazy-load, memory-map models), split workload across processes, or scale horizontally. 
+GitHub
